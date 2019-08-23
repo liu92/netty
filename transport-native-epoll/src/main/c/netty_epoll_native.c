@@ -356,6 +356,10 @@ static jint netty_epoll_native_recvmmsg0(JNIEnv* env, jclass clazz, jint fd, jbo
         jobject packet = (*env)->GetObjectArrayElement(env, packets, i + offset);
         msg[i].msg_hdr.msg_iov = (struct iovec*) (intptr_t) (*env)->GetLongField(env, packet, packetMemoryAddressFieldId);
         msg[i].msg_hdr.msg_iovlen = (*env)->GetIntField(env, packet, packetCountFieldId);
+
+        struct sockaddr_storage addr;
+        msg[i].msg_hdr.msg_name = (struct sockaddr*) &addr;
+        msg[i].msg_hdr.msg_namelen = (socklen_t) sizeof(addr);
     }
 
     ssize_t res;
@@ -368,26 +372,30 @@ static jint netty_epoll_native_recvmmsg0(JNIEnv* env, jclass clazz, jint fd, jbo
     if (res < 0) {
         return -err;
     }
+
     for (i = 0; i < res; i++) {
         jobject packet = (*env)->GetObjectArrayElement(env, packets, i + offset);
         jbyteArray address = (jbyteArray) (*env)->GetObjectField(env, packet, packetAddrFieldId);
 
         (*env)->SetIntField(env, packet, packetCountFieldId, msg[i].msg_len);
 
-        if (ipv6 == JNI_TRUE) {
-            struct sockaddr_in6* ip6addr = (struct sockaddr_in6*) msg[i].msg_hdr.msg_name;
+        struct sockaddr_storage* addr = (struct sockaddr_storage*) msg[i].msg_hdr.msg_name;
 
-            (*env)->SetByteArrayRegion(env, address, 0, 16, (jbyte*) &ip6addr->sin6_addr.s6_addr);
-            (*env)->SetIntField(env, packet, packetScopeIdFieldId, ip6addr->sin6_scope_id);
-            (*env)->SetIntField(env, packet, packetPortFieldId, ntohs(ip6addr->sin6_port));
-        } else {
-            struct sockaddr_in* ipaddr = (struct sockaddr_in*) msg[i].msg_hdr.msg_name;
+        if (addr->ss_family == AF_INET) {
+            struct sockaddr_in* ipaddr = (struct sockaddr_in*) addr;
 
             (*env)->SetByteArrayRegion(env, address, 0, 4, (jbyte*) &ipaddr->sin_addr.s_addr);
             (*env)->SetIntField(env, packet, packetScopeIdFieldId, 0);
             (*env)->SetIntField(env, packet, packetPortFieldId, ntohs(ipaddr->sin_port));
+        } else {
+              struct sockaddr_in6* ip6addr = (struct sockaddr_in6*) addr;
+
+              (*env)->SetByteArrayRegion(env, address, 0, 16, (jbyte*) &ip6addr->sin6_addr.s6_addr);
+              (*env)->SetIntField(env, packet, packetScopeIdFieldId, ip6addr->sin6_scope_id);
+              (*env)->SetIntField(env, packet, packetPortFieldId, ntohs(ip6addr->sin6_port));
         }
     }
+
     return (jint) res;
 }
 

@@ -112,6 +112,35 @@ public final class IovArray implements MessageProcessor {
         }
     }
 
+    public boolean addForWriting(ByteBuf buf) {
+        if (count == IOV_MAX) {
+            // No more room!
+            return false;
+        } else if (buf.nioBufferCount() == 1) {
+            final int len = buf.writableBytes();
+            if (len == 0) {
+                return true;
+            }
+            if (buf.hasMemoryAddress()) {
+                return add(buf.memoryAddress(), buf.writerIndex(), len);
+            } else {
+                ByteBuffer nioBuffer = buf.internalNioBuffer(buf.writerIndex(), len);
+                return add(Buffer.memoryAddress(nioBuffer), nioBuffer.position(), len);
+            }
+        } else {
+            // TODO: Fix me ?
+            ByteBuffer[] buffers = buf.nioBuffers();
+            for (ByteBuffer nioBuffer : buffers) {
+                final int len = nioBuffer.remaining();
+                if (len != 0 &&
+                        (!add(Buffer.memoryAddress(nioBuffer), nioBuffer.position(), len) || count == IOV_MAX)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     private boolean add(long addr, int offset, int len) {
         assert addr != 0;
 

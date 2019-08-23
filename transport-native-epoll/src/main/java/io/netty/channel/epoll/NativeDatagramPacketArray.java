@@ -76,20 +76,20 @@ final class NativeDatagramPacketArray implements ChannelOutboundBuffer.MessagePr
         return true;
     }
 
-    boolean add(ByteBuf content) {
+    boolean addForWrite(ByteBuf content) {
         if (count == packets.length) {
-            // We already filled up to UIO_MAX_IOV messages. This is the max allowed per sendmmsg(...) call, we will
+            // We already filled up to UIO_MAX_IOV messages. This is the max allowed per recvmmsg(...) call, we will
             // try again later.
             return false;
         }
-        int len = content.readableBytes();
+        int len = content.writableBytes();
         if (len == 0) {
             return true;
         }
         NativeDatagramPacket p = packets[count];
 
         int offset = iovArray.count();
-        if (!iovArray.add(content)) {
+        if (!iovArray.addForWriting(content)) {
             // Not enough space to hold the whole content, we will try again later.
             return false;
         }

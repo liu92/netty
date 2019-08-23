@@ -549,7 +549,7 @@ public final class EpollDatagramChannel extends AbstractEpollChannel implements 
                             // Try to use gathering writes via sendmmsg(...) syscall.
                             int offset = 0;
                             NativeDatagramPacketArray array = ((EpollEventLoop) eventLoop()).cleanDatagramPacketArray();
-                            boolean added = array.add(byteBuf);
+                            boolean added = array.addForWrite(byteBuf);
                             assert added;
                             NativeDatagramPacketArray.NativeDatagramPacket[] packets = array.packets();
                             int received = socket.recvmmsg(packets, 0, array.count());
