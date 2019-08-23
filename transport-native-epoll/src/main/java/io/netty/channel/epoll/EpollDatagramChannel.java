@@ -24,6 +24,7 @@ import io.netty.channel.ChannelOutboundBuffer;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.DefaultAddressedEnvelope;
+import io.netty.channel.epoll.NativeDatagramPacketArray.NativeDatagramPacket;
 import io.netty.channel.socket.DatagramChannel;
 import io.netty.channel.socket.DatagramChannelConfig;
 import io.netty.channel.socket.DatagramPacket;
@@ -514,7 +515,14 @@ public final class EpollDatagramChannel extends AbstractEpollChannel implements 
                             }
                             packet = new DatagramPacket(
                                     byteBuf, (InetSocketAddress) localAddress(), (InetSocketAddress) remoteAddress());
+                            allocHandle.incMessagesRead(1);
+
+                            readPending = false;
+
+                            pipeline.fireChannelRead(packet);
+                            byteBuf = null;
                         } else {
+                            /*
                             final DatagramSocketAddress remoteAddress;
                             if (byteBuf.hasMemoryAddress()) {
                                 // has a memory address so use optimized call
@@ -537,17 +545,40 @@ public final class EpollDatagramChannel extends AbstractEpollChannel implements 
                                 localAddress = (InetSocketAddress) localAddress();
                             }
                             allocHandle.lastBytesRead(remoteAddress.receivedAmount());
-                            byteBuf.writerIndex(byteBuf.writerIndex() + allocHandle.lastBytesRead());
+                             */
+                            // Try to use gathering writes via sendmmsg(...) syscall.
+                            int offset = 0;
+                            NativeDatagramPacketArray array = ((EpollEventLoop) eventLoop()).cleanDatagramPacketArray();
+                            boolean added = array.add(byteBuf);
+                            assert added;
+                            NativeDatagramPacketArray.NativeDatagramPacket[] packets = array.packets();
+                            int received = socket.recvmmsg(packets, 0, array.count());
+                            if (received == 0) {
+                                allocHandle.lastBytesRead(-1);
+                                byteBuf.release();
+                                byteBuf = null;
+                                break;
+                            }
+                            DatagramPacket[] receivedPackets = new DatagramPacket[received];
+                            int bytesRead = 0;
+                            for (int i = 0; i < received; i++) {
+                                NativeDatagramPacket p = packets[i];
+                                DatagramPacket dPacket =
+                                        p.newDatagramPacket(byteBuf, (InetSocketAddress) localAddress());
+                                bytesRead += dPacket.content().readableBytes();
+                                receivedPackets[i] = dPacket;
+                            }
+                            allocHandle.lastBytesRead(bytesRead);
+                            allocHandle.incMessagesRead(received);
 
-                            packet = new DatagramPacket(byteBuf, localAddress, remoteAddress);
+                            readPending = false;
+
+                            for (DatagramPacket datagramPacket: receivedPackets) {
+                                pipeline.fireChannelRead(datagramPacket);
+                            }
+                            byteBuf = null;
                         }
 
-                        allocHandle.incMessagesRead(1);
-
-                        readPending = false;
-                        pipeline.fireChannelRead(packet);
-
-                        byteBuf = null;
                     } while (allocHandle.continueReading());
                 } catch (Throwable t) {
                     if (byteBuf != null) {
