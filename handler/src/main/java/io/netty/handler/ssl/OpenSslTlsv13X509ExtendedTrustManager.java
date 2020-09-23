@@ -16,6 +16,7 @@
 package io.netty.handler.ssl;
 
 import io.netty.util.internal.PlatformDependent;
+import io.netty.util.internal.SuppressJava6Requirement;
 
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLPeerUnverifiedException;
@@ -35,6 +36,7 @@ import java.util.List;
  * default {@link X509ExtendedTrustManager} implementations provided by the JDK that can not handle a protocol version
  * of {@code TLSv1.3}.
  */
+@SuppressJava6Requirement(reason = "Usage guarded by java version check")
 final class OpenSslTlsv13X509ExtendedTrustManager extends X509ExtendedTrustManager {
 
     private final X509ExtendedTrustManager tm;
@@ -44,7 +46,7 @@ final class OpenSslTlsv13X509ExtendedTrustManager extends X509ExtendedTrustManag
     }
 
     static X509ExtendedTrustManager wrap(X509ExtendedTrustManager tm) {
-        if (PlatformDependent.javaVersion() < 11 && OpenSsl.isTlsv13Supported()) {
+        if (!SslProvider.isTlsv13Supported(SslProvider.JDK) && SslProvider.isTlsv13Supported(SslProvider.OPENSSL)) {
             return new OpenSslTlsv13X509ExtendedTrustManager(tm);
         }
         return tm;

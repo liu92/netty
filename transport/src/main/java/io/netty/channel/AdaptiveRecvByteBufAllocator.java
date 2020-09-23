@@ -35,7 +35,8 @@ import static java.lang.Math.min;
 public class AdaptiveRecvByteBufAllocator extends DefaultMaxMessagesRecvByteBufAllocator {
 
     static final int DEFAULT_MINIMUM = 64;
-    static final int DEFAULT_INITIAL = 1024;
+    // Use an initial value that is bigger than the common MTU of 1500
+    static final int DEFAULT_INITIAL = 2048;
     static final int DEFAULT_MAXIMUM = 65536;
 
     private static final int INDEX_INCREMENT = 4;
@@ -122,7 +123,7 @@ public class AdaptiveRecvByteBufAllocator extends DefaultMaxMessagesRecvByteBufA
         }
 
         private void record(int actualReadBytes) {
-            if (actualReadBytes <= SIZE_TABLE[max(0, index - INDEX_DECREMENT - 1)]) {
+            if (actualReadBytes <= SIZE_TABLE[max(0, index - INDEX_DECREMENT)]) {
                 if (decreaseNow) {
                     index = max(index - INDEX_DECREMENT, minIndex);
                     nextReceiveBufferSize = SIZE_TABLE[index];

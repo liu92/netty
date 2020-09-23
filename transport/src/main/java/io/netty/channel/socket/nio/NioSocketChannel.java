@@ -33,6 +33,7 @@ import io.netty.channel.socket.SocketChannelConfig;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.SocketUtils;
+import io.netty.util.internal.SuppressJava6Requirement;
 import io.netty.util.internal.UnstableApi;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
@@ -152,6 +153,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
         return (InetSocketAddress) super.remoteAddress();
     }
 
+    @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     @UnstableApi
     @Override
     protected final void doShutdownOutput() throws Exception {
@@ -270,6 +272,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
         }
     }
 
+    @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     private void shutdownInput0() throws Exception {
         if (PlatformDependent.javaVersion() >= 7) {
             javaChannel().shutdownInput();
@@ -389,7 +392,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
             ByteBuffer[] nioBuffers = in.nioBuffers(1024, maxBytesPerGatheringWrite);
             int nioBufferCnt = in.nioBufferCount();
 
-            // Always us nioBuffers() to workaround data-corruption.
+            // Always use nioBuffers() to workaround data-corruption.
             // See https://github.com/netty/netty/issues/2761
             switch (nioBufferCnt) {
                 case 0:
@@ -496,7 +499,6 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
             return super.getOption(option);
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public Map<ChannelOption<?>, Object> getOptions() {
             if (PlatformDependent.javaVersion() >= 7) {

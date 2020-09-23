@@ -23,7 +23,7 @@ import org.jctools.queues.MpscChunkedArrayQueue;
 import org.jctools.queues.MpscUnboundedArrayQueue;
 import org.jctools.queues.SpscLinkedQueue;
 import org.jctools.queues.atomic.MpscAtomicArrayQueue;
-import org.jctools.queues.atomic.MpscGrowableAtomicArrayQueue;
+import org.jctools.queues.atomic.MpscChunkedAtomicArrayQueue;
 import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
 import org.jctools.queues.atomic.SpscLinkedAtomicQueue;
 import org.jctools.util.Pow2;
@@ -118,7 +118,10 @@ public final class PlatformDependent {
     private static final ThreadLocalRandomProvider RANDOM_PROVIDER;
     private static final Cleaner CLEANER;
     private static final int UNINITIALIZED_ARRAY_ALLOCATION_THRESHOLD;
-
+    // For specifications, see https://www.freedesktop.org/software/systemd/man/os-release.html
+    private static final String[] OS_RELEASE_FILES = {"/etc/os-release", "/usr/lib/os-release"};
+    private static final String LINUX_ID_PREFIX = "ID=";
+    private static final String LINUX_ID_LIKE_PREFIX = "ID_LIKE=";
     public static final boolean BIG_ENDIAN_NATIVE_ORDER = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
 
     private static final Cleaner NOOP = new Cleaner() {
@@ -132,6 +135,7 @@ public final class PlatformDependent {
         if (javaVersion() >= 7) {
             RANDOM_PROVIDER = new ThreadLocalRandomProvider() {
                 @Override
+                @SuppressJava6Requirement(reason = "Usage guarded by java version check")
                 public Random current() {
                     return java.util.concurrent.ThreadLocalRandom.current();
                 }
@@ -211,49 +215,66 @@ public final class PlatformDependent {
                     "instability.");
         }
 
-        // For specifications, see https://www.freedesktop.org/software/systemd/man/os-release.html
-        final String[] OS_RELEASE_FILES = {"/etc/os-release", "/usr/lib/os-release"};
-        final String LINUX_ID_PREFIX = "ID=";
-        final String LINUX_ID_LIKE_PREFIX = "ID_LIKE=";
-        Set<String> allowedClassifiers = new HashSet<String>(Arrays.asList(ALLOWED_LINUX_OS_CLASSIFIERS));
-        allowedClassifiers = Collections.unmodifiableSet(allowedClassifiers);
-        Set<String> availableClassifiers = new LinkedHashSet<String>();
-
-        for (String osReleaseFileName : OS_RELEASE_FILES) {
+        final Set<String> allowedClassifiers = Collections.unmodifiableSet(
+                new HashSet<String>(Arrays.asList(ALLOWED_LINUX_OS_CLASSIFIERS)));
+        final Set<String> availableClassifiers = new LinkedHashSet<String>();
+        for (final String osReleaseFileName : OS_RELEASE_FILES) {
             final File file = new File(osReleaseFileName);
-            if (file.exists()) {
-                BufferedReader reader = null;
-                try {
-                    reader = new BufferedReader(
-                            new InputStreamReader(
-                                    new FileInputStream(file), CharsetUtil.UTF_8));
+            boolean found = AccessController.doPrivileged(new PrivilegedAction<Boolean>() {
+                @Override
+                public Boolean run() {
+                    try {
+                        if (file.exists()) {
+                            BufferedReader reader = null;
+                            try {
+                                reader = new BufferedReader(
+                                        new InputStreamReader(
+                                                new FileInputStream(file), CharsetUtil.UTF_8));
 
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (line.startsWith(LINUX_ID_PREFIX)) {
-                            String id = normalizeOsReleaseVariableValue(line.substring(LINUX_ID_PREFIX.length()));
-                            addClassifier(allowedClassifiers, availableClassifiers, id);
-                        } else if (line.startsWith(LINUX_ID_LIKE_PREFIX)) {
-                            line = normalizeOsReleaseVariableValue(line.substring(LINUX_ID_LIKE_PREFIX.length()));
-                            addClassifier(allowedClassifiers, availableClassifiers, line.split("[ ]+"));
+                                String line;
+                                while ((line = reader.readLine()) != null) {
+                                    if (line.startsWith(LINUX_ID_PREFIX)) {
+                                        String id = normalizeOsReleaseVariableValue(
+                                                line.substring(LINUX_ID_PREFIX.length()));
+                                        addClassifier(allowedClassifiers, availableClassifiers, id);
+                                    } else if (line.startsWith(LINUX_ID_LIKE_PREFIX)) {
+                                        line = normalizeOsReleaseVariableValue(
+                                                line.substring(LINUX_ID_LIKE_PREFIX.length()));
+                                        addClassifier(allowedClassifiers, availableClassifiers, line.split("[ ]+"));
+                                    }
+                                }
+                            } catch (SecurityException e) {
+                                logger.debug("Unable to read {}", osReleaseFileName, e);
+                            } catch (IOException e) {
+                                logger.debug("Error while reading content of {}", osReleaseFileName, e);
+                            } finally {
+                                if (reader != null) {
+                                    try {
+                                        reader.close();
+                                    } catch (IOException ignored) {
+                                        // Ignore
+                                    }
+                                }
+                            }
+                            // specification states we should only fall back if /etc/os-release does not exist
+                            return true;
                         }
+                    } catch (SecurityException e) {
+                        logger.debug("Unable to check if {} exists", osReleaseFileName, e);
                     }
-                } catch (IOException ignored) {
-                    // Ignore
-                } finally {
-                    if (reader != null) {
-                        try {
-                            reader.close();
-                        } catch (IOException ignored) {
-                            // Ignore
-                        }
-                    }
+                    return false;
                 }
-                // specification states we should only fall back if /etc/os-release does not exist
+            });
+
+            if (found) {
                 break;
             }
         }
         LINUX_OS_CLASSIFIERS = Collections.unmodifiableSet(availableClassifiers);
+    }
+
+    public static long byteArrayBaseOffset() {
+        return BYTE_ARRAY_BASE_OFFSET;
     }
 
     public static boolean hasDirectBufferNoCleanerConstructor() {
@@ -502,6 +523,10 @@ public final class PlatformDependent {
         return PlatformDependent0.getByte(data, index);
     }
 
+    public static byte getByte(byte[] data, long index) {
+        return PlatformDependent0.getByte(data, index);
+    }
+
     public static short getShort(byte[] data, int index) {
         return PlatformDependent0.getShort(data, index);
     }
@@ -510,7 +535,15 @@ public final class PlatformDependent {
         return PlatformDependent0.getInt(data, index);
     }
 
+    public static int getInt(int[] data, long index) {
+        return PlatformDependent0.getInt(data, index);
+    }
+
     public static long getLong(byte[] data, int index) {
+        return PlatformDependent0.getLong(data, index);
+    }
+
+    public static long getLong(long[] data, long index) {
         return PlatformDependent0.getLong(data, index);
     }
 
@@ -630,6 +663,10 @@ public final class PlatformDependent {
         PlatformDependent0.putByte(data, index, value);
     }
 
+    public static void putByte(Object data, long offset, byte value) {
+        PlatformDependent0.putByte(data, offset, value);
+    }
+
     public static void putShort(byte[] data, int index, short value) {
         PlatformDependent0.putShort(data, index, value);
     }
@@ -656,6 +693,11 @@ public final class PlatformDependent {
 
     public static void copyMemory(byte[] src, int srcIndex, long dstAddr, long length) {
         PlatformDependent0.copyMemory(src, BYTE_ARRAY_BASE_OFFSET + srcIndex, null, dstAddr, length);
+    }
+
+    public static void copyMemory(byte[] src, int srcIndex, byte[] dst, int dstIndex, long length) {
+        PlatformDependent0.copyMemory(src, BYTE_ARRAY_BASE_OFFSET + srcIndex,
+                                      dst, BYTE_ARRAY_BASE_OFFSET + dstIndex, length);
     }
 
     public static void copyMemory(long srcAddr, byte[] dst, int dstIndex, long length) {
@@ -893,12 +935,12 @@ public final class PlatformDependent {
         }
 
         static <T> Queue<T> newMpscQueue(final int maxCapacity) {
-            // Calculate the max capacity which can not be bigger then MAX_ALLOWED_MPSC_CAPACITY.
+            // Calculate the max capacity which can not be bigger than MAX_ALLOWED_MPSC_CAPACITY.
             // This is forced by the MpscChunkedArrayQueue implementation as will try to round it
             // up to the next power of two and so will overflow otherwise.
             final int capacity = max(min(maxCapacity, MAX_ALLOWED_MPSC_CAPACITY), MIN_MAX_MPSC_CAPACITY);
             return USE_MPSC_CHUNKED_ARRAY_QUEUE ? new MpscChunkedArrayQueue<T>(MPSC_CHUNK_SIZE, capacity)
-                                                : new MpscGrowableAtomicArrayQueue<T>(MPSC_CHUNK_SIZE, capacity);
+                                                : new MpscChunkedAtomicArrayQueue<T>(MPSC_CHUNK_SIZE, capacity);
         }
 
         static <T> Queue<T> newMpscQueue() {
@@ -964,6 +1006,7 @@ public final class PlatformDependent {
     /**
      * Returns a new concurrent {@link Deque}.
      */
+    @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     public static <C> Deque<C> newConcurrentDeque() {
         if (javaVersion() < 7) {
             return new LinkedBlockingDeque<C>();
@@ -1115,6 +1158,8 @@ public final class PlatformDependent {
                         break;
                     case 'g': case 'G':
                         maxDirectMemory *= 1024 * 1024 * 1024;
+                        break;
+                    default:
                         break;
                 }
                 break;
